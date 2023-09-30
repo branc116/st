@@ -60,6 +60,8 @@ static void zoomabs(const Arg *);
 static void zoomreset(const Arg *);
 static void ttysend(const Arg *);
 static void cyclefonts(const Arg *);
+static void dislex(const Arg *);
+static void dislex_toggle(const Arg *);
 
 /* config.h for applying patches and the configuration. */
 #include "config.h"
@@ -336,6 +338,20 @@ cyclefonts(const Arg *arg)
 	Arg larg;
 	larg.f = usedfontsize;
 	zoomabs(&larg);
+}
+
+static float s_dislex = .3f;
+static int s_dislex_toggle = 0;
+void
+dislex(const Arg *arg)
+{
+	s_dislex *= arg->f;
+}
+
+static void 
+dislex_toggle(const Arg * arg)
+{
+	s_dislex_toggle = !s_dislex_toggle;
 }
 
 int
@@ -1655,17 +1671,58 @@ xstartdraw(void)
 	return IS_SET(MODE_VISIBLE);
 }
 
+int
+xisalpha(int ch)
+{
+	return (ch >= 'a' && ch <= 'z') ||
+		(ch >= 'A' && ch <= 'Z');
+}
+
+unsigned int
+lesscontrast(unsigned int fg, unsigned int bg)
+{
+	if (!IS_TRUECOL(fg)) {
+		XRenderColor fgc = dc.col[fg].color;
+		fg = TRUECOLOR(fgc.red/256, fgc.green/256, fgc.blue/256);
+	}
+	if (!IS_TRUECOL(bg)) {
+		XRenderColor fgc = dc.col[bg].color;
+		bg = TRUECOLOR(fgc.red/256, fgc.green/256, fgc.blue/256);
+	}
+	unsigned int r1 = TRUERED(fg)/256, g1 = TRUEGREEN(fg)/256, b1 = TRUEBLUE(fg)/256;
+	unsigned int r2 = TRUERED(bg)/256, g2 = TRUEGREEN(bg)/256, b2 = TRUEBLUE(bg)/256;
+	unsigned int rm = (r1 + r2) / 2, gm = (g1 + g2) / 2, bm = (b1 + b2) / 2; 
+	r1 = (unsigned int)((r1 * s_dislex) + (rm * (1.f - s_dislex)));
+	if (r1 > 255) r1 = 255;
+	g1 = (unsigned int)((g1 * s_dislex) + (gm * (1.f - s_dislex)));
+	if (g1 > 255) g1 = 255;
+	b1 = (unsigned int)((b1 * s_dislex) + (bm * (1.f - s_dislex)));
+	if (b1 > 255) b1 = 255;
+	return TRUECOLOR(r1, g1, b1);
+}
+
 void
 xdrawline(Line line, int x1, int y1, int x2)
 {
 	int i, x, ox, numspecs;
 	Glyph base, new;
 	XftGlyphFontSpec *specs = xw.specbuf;
+	int last_alpha = 0;
 
 	numspecs = xmakeglyphfontspecs(specs, &line[x1], x2 - x1, x1, y1);
 	i = ox = 0;
 	for (x = x1; x < x2 && i < numspecs; x++) {
 		new = line[x];
+		if (s_dislex_toggle) {
+			if (xisalpha(new.u)) {
+				++last_alpha;
+				if (last_alpha < 4) new.mode |= ATTR_BOLD | ATTR_ITALIC;
+				else {
+				 new.mode &= ~(ATTR_BOLD | ATTR_ITALIC);
+				 new.fg = lesscontrast(new.fg, new.bg);
+				}
+			} else last_alpha = 0;
+		}
 		if (new.mode == ATTR_WDUMMY)
 			continue;
 		if (selected(x, y1))
